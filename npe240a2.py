@@ -1,4 +1,5 @@
 from aiomqtt import Client, MqttError
+from datetime import datetime
 from gpiozero import OutputDevice
 from typing import Self
 import asyncio
@@ -6,7 +7,9 @@ import serial
 import time
 
 # Debug mode
-DEBUG_MODE = False
+DEBUG_PACKETS = False
+DEBUG_MQTT = False
+DEBUG_UNKNOWN_FIELDS = True
 
 # MQTT
 MQTT_BROKER = "<broker>"
@@ -108,8 +111,23 @@ class Packet:
         self.crc = data[-1]
 
 class GasPacket:
+    _unknown_fields = [
+        (32, None),
+        (33, None),
+        (34, None),
+        (35, None)
+    ]
+    
     def __init__(self: Self, packet: Packet):
         self._packet = packet
+        if DEBUG_UNKNOWN_FIELDS:
+            for i in range(len(self._unknown_fields)):
+                (index, previous_value) = self._unknown_fields[i]
+                current_value = self._packet.data[index]
+                if previous_value is not None:
+                    if current_value != previous_value:
+                        print(f"{datetime.now()}#Gas byte {index} changed from {previous_value:02x} to {current_value:02x}")
+                self._unknown_fields[i] = (index, current_value)
 
     @property
     def command_type(self: Self) -> int:
@@ -197,14 +215,19 @@ class GasPacket:
         return Helpers.convert_m3_ccf(self.gas_total_usage_m3)
 
     @property
-    def unknown_26_29(self: Self) -> bytes:
-        """Bytes [26,27,28,29] are unknown"""
-        return self._packet.data[26:30]
+    def unknown_26_27(self: Self) -> bytes:
+        """Bytes [26,27] are unknown"""
+        return self._packet.data[26:28]
 
     @property
-    def usage_counter(self: Self) -> int:
-        """Domestic usage counter in 10 usage increments"""
-        return Helpers.combine_bytes(self._packet.data, 30, 2)
+    def days_since_install(self: Self) -> int:
+        """The number of days the system has been online"""
+        return Helpers.combine_bytes(self._packet.data, 28, 2)
+
+    @property
+    def times_used(self: Self) -> int:
+        """The number of times the system has fired up"""
+        return Helpers.combine_bytes(self._packet.data, 30, 2) * 10
 
     @property
     def unknown_32_35(self: Self) -> bytes:
@@ -215,6 +238,16 @@ class GasPacket:
     def total_run_time_h(self: Self) -> int:
         """The total time the system has been active"""
         return Helpers.combine_bytes(self._packet.data, 36, 2)
+
+    @property
+    def unknown_38_45(self: Self) -> bytes:
+        """Bytes [38,39,40,41,42,43,44,45] are unknown"""
+        return self._packet.data[38:46]
+
+    @property
+    def recirculation_enabled(self: Self) -> bool:
+        """Indicates that recirculation is enabled"""
+        return self._packet.data[46] != 0x00
 
     @staticmethod
     def decode(packet: Packet) -> Self:
@@ -227,8 +260,24 @@ class WaterPacket:
     FLOW_STATE_RECIRCULATING = 0x08
     FLOW_STATE_ACTIVE = 0x20
 
+    _unknown_fields = [
+        (8, None),
+        (9, None),
+        (10, None),
+        (27, None),
+        (28, None)
+    ]
+
     def __init__(self: Self, packet: Packet):
         self._packet = packet
+        if DEBUG_UNKNOWN_FIELDS:
+            for i in range(len(self._unknown_fields)):
+                (index, previous_value) = self._unknown_fields[i]
+                current_value = self._packet.data[index]
+                if previous_value is not None:
+                    if current_value != previous_value:
+                        print(f"{datetime.now()}#Water byte {index} changed from {previous_value:02x} to {current_value:02x}")
+                self._unknown_fields[i] = (index, current_value)                
 
     @property
     def command_type(self: Self) -> int:
@@ -313,27 +362,35 @@ class WaterPacket:
     @property
     def system_status(self: Self) -> int:
         """The system status"""
+        # 0x01 = internal recirculation enabled
+        # 0x02 = external recirculation enabled
+        # 0x08 = display in metric
         return self._packet.data[24]
     
+    @property
+    def system_status_internal_recirculation_enabled(self: Self) -> bool:
+        """Indicates whether internal recirculation is enabled"""
+        return (self.system_status & 0x01) == 0x01
+
+    @property
+    def system_status_external_recirculation_enabled(self: Self) -> bool:
+        """Indicates whether external recirculation is enabled"""
+        return (self.system_status & 0x02) == 0x02
+
+    @property
+    def system_status_recirculation_enabled(self: Self) -> bool:
+        """Indicates whether recirculation is enabled"""
+        return self.system_status_external_recirculation_enabled or self.system_status_internal_recirculation_enabled
+
     @property
     def system_status_metric(self: Self) -> bool:
         """Indicates whether the system displays in metric"""
         return self.system_status & 0x08
     
     @property
-    def unknown_25_32(self: Self) -> bytes:
-        """Bytes [25,26,27,28,29,30,31,32] are unknown"""
+    def unknown_25_39(self: Self) -> bytes:
+        """Bytes [25,26,27,28,29,30,31,32,33,34,35,36,37,38,39] are unknown"""
         return self._packet.data[25:33]
-
-    @property
-    def recirculation_enabled(self: Self) -> int:
-        """Recirculation enabled?"""
-        return self._packet.data[33]
-
-    @property
-    def unknown_34_39(self: Self) -> bytes:
-        """Bytes [34,35,36,37,38,39] are unknown"""
-        return self._packet.data[34:40]
 
     @staticmethod
     def decode(packet: Packet) -> Self:
@@ -355,12 +412,11 @@ class MqttState:
         self._publish_interval_sec = 5.0
 
     async def publish_changes(self: Self, client: Client, new_state: Self):
-        if not DEBUG_MODE:
-            await self.try_publish(client, new_state, MQTT_TOPIC_GAS_CURRENT_USAGE, "gas_current_usage_btu")
-            await self.try_publish(client, new_state, MQTT_TOPIC_GAS_TOTAL_USAGE, "gas_total_usage_ccf")
-            await self.try_publish(client, new_state, MQTT_TOPIC_WATER_CAPACITY, "water_capacity")
-            await self.try_publish(client, new_state, MQTT_TOPIC_WATER_FLOW_RATE, "water_flow_rate_gpm")
-            await self.try_publish(client, new_state, MQTT_TOPIC_WATER_OUTLET_TEMP, "water_outlet_temp_f")
+        await self.try_publish(client, new_state, MQTT_TOPIC_GAS_CURRENT_USAGE, "gas_current_usage_btu")
+        await self.try_publish(client, new_state, MQTT_TOPIC_GAS_TOTAL_USAGE, "gas_total_usage_ccf")
+        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_CAPACITY, "water_capacity")
+        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_FLOW_RATE, "water_flow_rate_gpm")
+        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_OUTLET_TEMP, "water_outlet_temp_f")
 
     async def try_publish(self: Self, client: Client, newstate: Self, topic: str, attr_name: str):
         current_value = getattr(self, attr_name)
@@ -371,7 +427,10 @@ class MqttState:
             if last_publish is None or current_time - last_publish >= self._publish_interval_sec:
                 self._last_publish_time[topic] = current_time
                 setattr(self, attr_name, new_value)
-                await client.publish(topic, str(new_value), retain=True)
+                if DEBUG_MQTT:
+                    print(f"Would have published {new_value} to {topic} at {datetime.now()}")
+                else:
+                    await client.publish(topic, str(new_value), retain=True)
 #endregion Mqtt
 
 current_state = MqttState()
@@ -412,7 +471,7 @@ async def main_loop(ser, client):
     while True:
         packet = read_packet(ser)
         if packet:
-            if DEBUG_MODE:
+            if DEBUG_PACKETS:
                 # Dump raw packet for manual parsing
                 print(f"Raw packet ({len(packet.data)} bytes): {Helpers.format_hex(packet.data)}")
 
@@ -422,26 +481,29 @@ async def main_loop(ser, client):
                 gasPacket = GasPacket.decode(packet)
                 if gasPacket is not None:
                     await process_gas_packet(client, gasPacket)
-                elif DEBUG_MODE:
+                elif DEBUG_PACKETS:
                     print(f"  -> Invalid gas packet")
             elif packet_type == Header.WATER_ID:
                 waterPacket = WaterPacket.decode(packet)
                 if waterPacket is not None:
                     await process_water_packet(client, waterPacket)
-                elif DEBUG_MODE:
+                elif DEBUG_PACKETS:
                     print(f"  -> Invalid water packet")
-            elif DEBUG_MODE:
+            elif DEBUG_PACKETS:
                 print(f"  -> Unknown packet type: {packet_type:02x}")
             
-            if DEBUG_MODE:
+            if DEBUG_PACKETS:
                 # Blank line between packets
                 print("")
+
+        # Make sure background tasks can run (e.g. MQTT pings)
+        await asyncio.sleep(0)
 
 async def process_gas_packet(client, packet: GasPacket):
     """Parse gas-related packet (Packet B)"""
 
-    if DEBUG_MODE:
-        print(f"  Time: {time.time()}")
+    if DEBUG_PACKETS:
+        print(f"  Time: {datetime.now()}")
         print(f"  Type: Gas")
         print(f"  Current Gas Usage: {packet.gas_current_usage_kcal} kcal / {packet.gas_current_usage_btu} btu")
         print(f"  Target Gas Usage: {packet.gas_set_usage_kcal} kcal / {packet.gas_set_usage_btu} btu")
@@ -460,8 +522,8 @@ async def process_gas_packet(client, packet: GasPacket):
 async def process_water_packet(client, packet: WaterPacket):
     """Parse water-related packet (Packet A)"""
 
-    if DEBUG_MODE:
-        print(f"  Time: {time.time()}")
+    if DEBUG_PACKETS:
+        print(f"  Time: {datetime.now()}")
         print(f"  Type: Water")
         print(f"  System Power: {packet.system_power}")
         print(f"  System Status: 0x{packet.system_status:02x}")
@@ -513,7 +575,7 @@ def read_packet(ser) -> Packet:
 
                 if crc_actual == crc_expected:
                     return packet
-                elif DEBUG_MODE:
+                elif DEBUG_PACKETS:
                     print(f"CRC MISMATCH!! ({crc_expected} != {crc_actual})")
 
 if __name__ == "__main__":
