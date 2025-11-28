@@ -7,19 +7,9 @@ import serial
 import time
 
 # Debug mode
-DEBUG_PACKETS = False
-DEBUG_MQTT = False
+DEBUG_PACKETS = True
+DEBUG_MQTT = True
 DEBUG_UNKNOWN_FIELDS = True
-
-# MQTT
-MQTT_BROKER = "<broker>"
-MQTT_USER = "<user>"
-MQTT_PASSWORD = "<password>"
-MQTT_TOPIC_GAS_CURRENT_USAGE = "npe240a2/gas/current"
-MQTT_TOPIC_GAS_TOTAL_USAGE = "npe240a2/gas/total"
-MQTT_TOPIC_WATER_CAPACITY = "npe240a2/water/capacity"
-MQTT_TOPIC_WATER_OUTLET_TEMP = "npe240a2/water/outlet_temp"
-MQTT_TOPIC_WATER_FLOW_RATE = "npe240a2/water/flow_rate"
 
 #region Helpers
 class Helpers:
@@ -124,9 +114,10 @@ class GasPacket:
             for i in range(len(self._unknown_fields)):
                 (index, previous_value) = self._unknown_fields[i]
                 current_value = self._packet.data[index]
-                if previous_value is not None:
-                    if current_value != previous_value:
-                        print(f"{datetime.now()}#Gas byte {index} changed from {previous_value:02x} to {current_value:02x}")
+                if previous_value is None:
+                    previous_value = 0
+                if current_value != previous_value:
+                    print(f"{datetime.now()}: Gas byte {index} changed from {previous_value:02x} to {current_value:02x}")
                 self._unknown_fields[i] = (index, current_value)
 
     @property
@@ -274,9 +265,10 @@ class WaterPacket:
             for i in range(len(self._unknown_fields)):
                 (index, previous_value) = self._unknown_fields[i]
                 current_value = self._packet.data[index]
-                if previous_value is not None:
-                    if current_value != previous_value:
-                        print(f"{datetime.now()}#Water byte {index} changed from {previous_value:02x} to {current_value:02x}")
+                if previous_value is None:
+                    previous_value = 0
+                if current_value != previous_value:
+                    print(f"{datetime.now()}: Water byte {index} changed from {previous_value:02x} to {current_value:02x}")
                 self._unknown_fields[i] = (index, current_value)                
 
     @property
@@ -290,19 +282,54 @@ class WaterPacket:
         return Helpers.slice_bytes(self._packet.data, 7, 1)
 
     @property
-    def flow_state(self: Self) -> int:
+    def flow_status(self: Self) -> int:
         """The flow state of the system"""
         return self._packet.data[8]
+
+    @property
+    def flow_status_recirculating(self: Self) -> bool:
+        """Indicates if the system is recirculating"""
+        return self.flow_status == 0x08
+    
+    @property
+    def flow_status_demand(self: Self) -> bool:
+        """Indicates if the system is in demand"""
+        return self.flow_status == 0x20
 
     @property
     def system_power(self: Self) -> int:
         """ System power information """
         return self._packet.data[9]
-    
+
     @property
-    def unknown_10(self: Self) -> bytes:
-        """Bytes [10] are unknown"""
-        return Helpers.slice_bytes(self._packet.data, 10, 1)
+    def system_power_on(self: Self) -> bool:
+        """Indicates if the system is on"""
+        return self.system_power & 0x05 == 0x05
+
+    @property
+    def system_power_recirculation_on(self: Self) -> bool:
+        """Indicates if the system is in recirculation mode"""
+        return self.system_power & 0x20 == 0x20
+
+    @property
+    def system_stage(self: Self) -> int:
+        """The stage of the system"""
+        return self._packet.data[10]
+
+    @property
+    def system_stage_name(self: Self) -> str:
+        """The name of the current system stage"""
+        stage_id = (self.system_stage & 0xF0) >> 4
+        if stage_id == 1:
+            return "idle"
+        elif stage_id == 2:
+            return "startup"
+        elif stage_id == 3:
+            return "active"
+        elif stage_id == 4:
+            return "shutdown"
+        else:
+            return f"unknown-{stage_id}"
 
     @property
     def water_set_temp_c(self: Self) -> float:
@@ -400,10 +427,24 @@ class WaterPacket:
 #endregion Packets
 
 #region Mqtt
-class MqttState:
+class Mqtt:
+    BROKER = "<broker>"
+    USER = "<user>"
+    PASSWORD = "<password>"
+
+    TOPIC_GAS_CURRENT_USAGE = "npe240a2/gas/current"
+    TOPIC_GAS_TOTAL_USAGE = "npe240a2/gas/total"
+    TOPIC_RECIRCULATING = "npe240a2/recirculating"
+    TOPIC_STAGE = "npe240a2/stage"
+    TOPIC_WATER_CAPACITY = "npe240a2/water/capacity"
+    TOPIC_WATER_OUTLET_TEMP = "npe240a2/water/outlet_temp"
+    TOPIC_WATER_FLOW_RATE = "npe240a2/water/flow_rate"
+
     def __init__(self: Self):
         self.gas_current_usage_btu: float = None
         self.gas_total_usage_ccf: float = None
+        self.recirclating: bool = None
+        self.stage: str = None
         self.water_capacity: float = None
         self.water_outlet_temp_f: float = None
         self.water_flow_rate_gpm: float = None
@@ -412,11 +453,13 @@ class MqttState:
         self._publish_interval_sec = 5.0
 
     async def publish_changes(self: Self, client: Client, new_state: Self):
-        await self.try_publish(client, new_state, MQTT_TOPIC_GAS_CURRENT_USAGE, "gas_current_usage_btu")
-        await self.try_publish(client, new_state, MQTT_TOPIC_GAS_TOTAL_USAGE, "gas_total_usage_ccf")
-        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_CAPACITY, "water_capacity")
-        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_FLOW_RATE, "water_flow_rate_gpm")
-        await self.try_publish(client, new_state, MQTT_TOPIC_WATER_OUTLET_TEMP, "water_outlet_temp_f")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_GAS_CURRENT_USAGE, "gas_current_usage_btu")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_GAS_TOTAL_USAGE, "gas_total_usage_ccf")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_RECIRCULATING, "recirclating")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_STAGE, "stage")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_CAPACITY, "water_capacity")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_FLOW_RATE, "water_flow_rate_gpm")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_OUTLET_TEMP, "water_outlet_temp_f")
 
     async def try_publish(self: Self, client: Client, newstate: Self, topic: str, attr_name: str):
         current_value = getattr(self, attr_name)
@@ -433,7 +476,7 @@ class MqttState:
                     await client.publish(topic, str(new_value), retain=True)
 #endregion Mqtt
 
-current_state = MqttState()
+current_state = Mqtt()
 
 async def main():
     try:
@@ -450,8 +493,8 @@ async def main():
         
         while True:
             try:
-                print(f"Connecting to MQTT broker at {MQTT_USER}@{MQTT_BROKER}...")
-                async with Client(MQTT_BROKER, username=MQTT_USER, password=MQTT_PASSWORD) as client:
+                print(f"Connecting to MQTT broker at {Mqtt.USER}@{Mqtt.BROKER}...")
+                async with Client(Mqtt.BROKER, username=Mqtt.USER, password=Mqtt.PASSWORD) as client:
                     print("Connected!")
                     await main_loop(ser, client)
             except MqttError as e:
@@ -512,7 +555,7 @@ async def process_gas_packet(client, packet: GasPacket):
         print(f"  Water Outlet Temp: {packet.water_outlet_temp_c} °C / {packet.water_outlet_temp_f} °F")
         print(f"  Water Inlet Temp: {packet.water_inlet_temp_c} °C / {packet.water_inlet_temp_f} °F")
 
-    new_state = MqttState()
+    new_state = Mqtt()
     new_state.gas_current_usage_btu = packet.gas_current_usage_btu
     new_state.gas_total_usage_ccf = packet.gas_total_usage_ccf
     new_state.water_outlet_temp_f = packet.water_outlet_temp_f
@@ -530,12 +573,15 @@ async def process_water_packet(client, packet: WaterPacket):
         print(f"  Set Temperature: {packet.water_set_temp_c} °C / {packet.water_set_temp_f} °F")
         print(f"  Heat Exchanger Outlet Temperature: {packet.heatexchanger_outlet_temp_c} °C / {packet.heatexchanger_outlet_temp_f} °F")
         print(f"  Heat Exchanger Inlet Temperature: {packet.heatexchanger_inlet_temp_c} °C / {packet.heatexchanger_inlet_temp_f} °F")
-        print(f"  Flow Capacity: {packet.operating_capacity}%")
+        print(f"  Capacity: {packet.operating_capacity}%")
+        print(f"  Flow Status: demand={packet.flow_status_demand} recirculating={packet.flow_status_recirculating}")
         print(f"  Flow Rate: {packet.flow_rate_lpm} lpm / {packet.flow_rate_gpm} gpm")
 
-    new_state = MqttState()
+    new_state = Mqtt()
+    new_state.recirclating = packet.system_power_recirculation_on
+    new_state.stage = packet.system_stage_name
     new_state.water_capacity = packet.operating_capacity
-    new_state.water_flow_rate_gpm = packet.flow_rate_gpm
+    new_state.water_flow_rate_gpm = packet.flow_rate_gpm if packet.flow_status_demand else 0.0
 
     await current_state.publish_changes(client, new_state)
 

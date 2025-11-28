@@ -10,9 +10,11 @@ Here's what I used, but anything that works is obviously fine!
 You want to wire the Blue wire to A, and the Blue/White wire to B. If you're looking at your RJ45 with the latch facing down, these correspond to the 5th and 4th wires from the left respectively. You do not need to worry about using the other two wires for power.
 
 # Protocol
-Some very smart folks have already reverse engineered the majority of the protocol. Here's some useful links from which I derived my own parsing:
-https://community.home-assistant.io/t/navien-esp32-navilink-interface/720567/20
-https://github.com/htumanyan/navien/blob/main/doc/README.md
+Some very smart folks have already reverse engineered the majority of the protocol. Here's some useful links from which I derived my own parsing:  
+1. https://community.home-assistant.io/t/navien-esp32-navilink-interface/720567/20
+2. https://github.com/htumanyan/navien
+3. https://github.com/dacarson/NavienManager
+4. https://github.com/evanjarrett/ESPHome-Navien
 
 ## Header
 |Byte Start|Length|Description|Values|
@@ -55,18 +57,19 @@ https://github.com/htumanyan/navien/blob/main/doc/README.md
 |43|1|unknown|always `0x48`|
 |44|1|unknown|always `0x00`|
 |45|1|unknown|always `0x00`|
-|46|1|recircilation enabled|`0x00` = no<br>`0x01` = yes|
+|46|1|recirculation enabled|`0x00` = no<br>`0x01` = yes|
 |47|1|unknown|always `0x00`|
 |48|1|CRC||
 
 ## Water
+*NOTE: multi-byte numbers are in little-endian*
 |Byte Start|Length|Description|Values|
 |-|-|-|-|
 |6|1|status type|always `0x42`|
 |7|1|unknown|always `0x00`|
-|8|1|flow detected|`0x20` = demand|
-|9|1|system power|`0x05` = on|
-|10|1|system status|hi nibble appears to be stage:<br>`0x1-` = idle<br>`0x2-` = start up<br>`0x3-` = active<br>`0x4-` = shutdown|
+|8|1|flow detected|`0x08` = recirculating<br>`0x20` = demand|
+|9|1|system power|`0x05` = on<br>`0x25` = recirculation active|
+|10|1|system stage|`0x1-` = idle<br>&nbsp;&nbsp;`0x14` = stand-by<br>`0x2-` = start up<br>&nbsp;&nbsp;`0x20` = ?<br>&nbsp;&nbsp;`0x29` = ?<br>&nbsp;&nbsp;`0x2B` = ?<br>&nbsp;&nbsp;`0x2C` = ?<br>&nbsp;&nbsp;`0x2D` = ?<br>`0x3-` = active<br>&nbsp;&nbsp;`0x33` = in use<br>&nbsp;&nbsp;`0x3C` = turning burner off (2s)<br>`0x4-` = shut down<br>&nbsp;&nbsp;`0x46` = post-purge 1/2 (15s)<br>&nbsp;&nbsp;`0x47` = post-purge 2/2 (15s)<br>&nbsp;&nbsp;`0x49` = dhw-wait (150s)|
 |11|1|set temperature|C value in increments of 0.5|
 |12|1|heat exchanger outlet temperature|C value in increments of 0.5|
 |13|1|heat exchanger inlet temperature|C value in increments of 0.5|
@@ -89,7 +92,7 @@ https://github.com/htumanyan/navien/blob/main/doc/README.md
 |30|1|unknown|always `0x01`|
 |31|1|unknown|always `0x00`|
 |32|1|unknown|always `0x00`|
-|33|1|unknown|always `0x02`|
+|33|1|unknown|always `0x02` (even when recirculation is off)|
 |34|1|unknown|always `0x00`|
 |35|1|unknown|always `0x00`|
 |36|1|unknown|always `0x00`|
