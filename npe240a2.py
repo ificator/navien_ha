@@ -56,12 +56,12 @@ class Helpers:
     @staticmethod
     def convert_kcal_btu(kcal: int) -> int:
         """Convert kcal to BTU"""
-        return round(kcal * 3.965667, 0)
+        return int(round(kcal * 3.965667, 0))
 
     @staticmethod
-    def convert_lpm_gpm(lpm: float) -> float:
-        """Convert LPM to GPM"""
-        return round(lpm * 0.264172, 1)
+    def convert_liters_gallons(liters: float) -> float:
+        """Convert liters to gallons"""
+        return round(liters * 0.264172, 1)
 
     @staticmethod
     def convert_m3_ccf(m3: float) -> float:
@@ -105,7 +105,9 @@ class GasPacket:
         (32, None),
         (33, None),
         (34, None),
-        (35, None)
+        (35, None),
+        (36, None),
+        (37, None)
     ]
     
     def __init__(self: Self, packet: Packet):
@@ -198,17 +200,12 @@ class GasPacket:
     @property
     def gas_total_usage_m3(self: Self) -> float:
         """The total gas usage"""
-        return Helpers.combine_bytes(self._packet.data, 24, 2) / 10.0
+        return Helpers.combine_bytes(self._packet.data, 24, 4) * 0.1
 
     @property
     def gas_total_usage_ccf(self: Self) -> float:
         """The total gas usage, in ccf"""
         return Helpers.convert_m3_ccf(self.gas_total_usage_m3)
-
-    @property
-    def unknown_26_27(self: Self) -> bytes:
-        """Bytes [26,27] are unknown"""
-        return self._packet.data[26:28]
 
     @property
     def days_since_install(self: Self) -> int:
@@ -221,14 +218,19 @@ class GasPacket:
         return Helpers.combine_bytes(self._packet.data, 30, 2) * 10
 
     @property
-    def unknown_32_35(self: Self) -> bytes:
-        """Bytes [32,33,34,35] are unknown"""
-        return self._packet.data[32:36]
+    def water_total_usage_l(self: Self) -> float:
+        """The total water usage, in liters"""
+        return Helpers.combine_bytes(self._packet.data, 32, 4) * 0.1
+    
+    @property
+    def water_total_usage_g(self: Self) -> float:
+        """The total water usage, in gallons"""
+        return Helpers.convert_liters_gallons(self.water_total_usage_l)
     
     @property
     def total_run_time_h(self: Self) -> int:
         """The total time the system has been active"""
-        return Helpers.combine_bytes(self._packet.data, 36, 2)
+        return Helpers.combine_bytes(self._packet.data, 36, 4)
 
     @property
     def unknown_38_45(self: Self) -> bytes:
@@ -320,14 +322,19 @@ class WaterPacket:
     def system_stage_name(self: Self) -> str:
         """The name of the current system stage"""
         stage_id = (self.system_stage & 0xF0) >> 4
+
+        stagePrefix = ""
+        if self.flow_status_recirculating:
+            stagePrefix = "recirculation-"
+
         if stage_id == 1:
-            return "idle"
+            return "standby"
         elif stage_id == 2:
-            return "startup"
+            return stagePrefix + "startup"
         elif stage_id == 3:
-            return "active"
+            return stagePrefix + "active"
         elif stage_id == 4:
-            return "shutdown"
+            return stagePrefix + "shutdown"
         else:
             return f"unknown-{stage_id}"
 
@@ -369,7 +376,7 @@ class WaterPacket:
     @property
     def operating_capacity(self: Self) -> int:
         """The capacity at which the system is running"""
-        return self._packet.data[17] * 0.5
+        return int(round(self._packet.data[17] * 0.5, 0))
 
     @property
     def flow_rate_lpm(self: Self) -> float:
@@ -379,7 +386,7 @@ class WaterPacket:
     @property
     def flow_rate_gpm(self: Self) -> float:
         """The rate at which water is flowing through the system"""
-        return Helpers.convert_lpm_gpm(self.flow_rate_lpm)
+        return Helpers.convert_liters_gallons(self.flow_rate_lpm)
 
     @property
     def unknown_19_23(self: Self) -> bytes:
@@ -415,9 +422,24 @@ class WaterPacket:
         return self.system_status & 0x08
     
     @property
-    def unknown_25_39(self: Self) -> bytes:
-        """Bytes [25,26,27,28,29,30,31,32,33,34,35,36,37,38,39] are unknown"""
-        return self._packet.data[25:33]
+    def unknown_25_26(self: Self) -> bytes:
+        """Bytes [25,26] are unknown"""
+        return self._packet.data[25:27]
+
+    @property
+    def system_active(self: Self) -> bool:
+        """Indicates whether the system is currently active"""
+        return self._packet.data[27] == 0x01
+
+    @property
+    def total_run_time_h(self: Self) -> int:
+        """The total time the system has been active"""
+        return Helpers.combine_bytes(self._packet.data, 28, 2)
+    
+    @property
+    def unknown_30_39(self: Self) -> bytes:
+        """Bytes [30,31,32,33,34,35,36,37,38,39] are unknown"""
+        return self._packet.data[30:40]
 
     @staticmethod
     def decode(packet: Packet) -> Self:
@@ -429,37 +451,51 @@ class WaterPacket:
 #region Mqtt
 class Mqtt:
     BROKER = "<broker>"
-    USER = "<user>"
+    USER = "<username>"
     PASSWORD = "<password>"
 
-    TOPIC_GAS_CURRENT_USAGE = "npe240a2/gas/current"
-    TOPIC_GAS_TOTAL_USAGE = "npe240a2/gas/total"
-    TOPIC_RECIRCULATING = "npe240a2/recirculating"
-    TOPIC_STAGE = "npe240a2/stage"
-    TOPIC_WATER_CAPACITY = "npe240a2/water/capacity"
-    TOPIC_WATER_OUTLET_TEMP = "npe240a2/water/outlet_temp"
-    TOPIC_WATER_FLOW_RATE = "npe240a2/water/flow_rate"
+    TOPIC_GAS_CURRENT_USAGE = "pi/waterheater/gas/current"
+    TOPIC_GAS_TOTAL_USAGE = "pi/waterheater/gas/total"
+    TOPIC_RECIRCULATING = "pi/waterheater/recirculating"
+    TOPIC_STAGE = "pi/waterheater/stage"
+    TOPIC_WATER_CAPACITY = "pi/waterheater/water/capacity"
+    TOPIC_WATER_INLET_TEMP = "pi/waterheater/water/inlet_temp"
+    TOPIC_WATER_OUTLET_TEMP = "pi/waterheater/water/outlet_temp"
+    TOPIC_WATER_FLOW_RATE = "pi/waterheater/water/flow_rate"
+    TOPIC_WATER_TOTAL_USAGE = "pi/waterheater/water/total"
 
     def __init__(self: Self):
         self.gas_current_usage_btu: float = None
         self.gas_total_usage_ccf: float = None
-        self.recirclating: bool = None
+        self.recirculating: bool = None
         self.stage: str = None
         self.water_capacity: float = None
-        self.water_outlet_temp_f: float = None
         self.water_flow_rate_gpm: float = None
+        self.water_inlet_temp_f: float = None
+        self.water_outlet_temp_f: float = None
+        self.water_total_usage_g: float = None
 
-        self._last_publish_time = {}
+        # Anything that changes too much can be put into this dictionary in order to apply
+        # throttling to topic updates.
+        self._last_publish_time = {
+            Mqtt.TOPIC_GAS_CURRENT_USAGE: 0.0,
+            Mqtt.TOPIC_WATER_CAPACITY: 0.0,
+            Mqtt.TOPIC_WATER_FLOW_RATE: 0.0,
+            Mqtt.TOPIC_WATER_INLET_TEMP: 0.0,
+            Mqtt.TOPIC_WATER_OUTLET_TEMP: 0.0
+        }
         self._publish_interval_sec = 5.0
 
     async def publish_changes(self: Self, client: Client, new_state: Self):
         await self.try_publish(client, new_state, Mqtt.TOPIC_GAS_CURRENT_USAGE, "gas_current_usage_btu")
         await self.try_publish(client, new_state, Mqtt.TOPIC_GAS_TOTAL_USAGE, "gas_total_usage_ccf")
-        await self.try_publish(client, new_state, Mqtt.TOPIC_RECIRCULATING, "recirclating")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_RECIRCULATING, "recirculating")
         await self.try_publish(client, new_state, Mqtt.TOPIC_STAGE, "stage")
         await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_CAPACITY, "water_capacity")
         await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_FLOW_RATE, "water_flow_rate_gpm")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_INLET_TEMP, "water_inlet_temp_f")
         await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_OUTLET_TEMP, "water_outlet_temp_f")
+        await self.try_publish(client, new_state, Mqtt.TOPIC_WATER_TOTAL_USAGE, "water_total_usage_g")
 
     async def try_publish(self: Self, client: Client, newstate: Self, topic: str, attr_name: str):
         current_value = getattr(self, attr_name)
@@ -467,8 +503,13 @@ class Mqtt:
         if new_value is not None and new_value != current_value:
             current_time = time.time()
             last_publish = self._last_publish_time.get(topic)
+
+            should_publish = False
             if last_publish is None or current_time - last_publish >= self._publish_interval_sec:
+                should_publish = True
                 self._last_publish_time[topic] = current_time
+
+            if should_publish:
                 setattr(self, attr_name, new_value)
                 if DEBUG_MQTT:
                     print(f"Would have published {new_value} to {topic} at {datetime.now()}")
@@ -558,7 +599,9 @@ async def process_gas_packet(client, packet: GasPacket):
     new_state = Mqtt()
     new_state.gas_current_usage_btu = packet.gas_current_usage_btu
     new_state.gas_total_usage_ccf = packet.gas_total_usage_ccf
+    new_state.water_inlet_temp_f = packet.water_inlet_temp_f
     new_state.water_outlet_temp_f = packet.water_outlet_temp_f
+    new_state.water_total_usage_g = packet.water_total_usage_g
 
     await current_state.publish_changes(client, new_state)
 
@@ -578,10 +621,10 @@ async def process_water_packet(client, packet: WaterPacket):
         print(f"  Flow Rate: {packet.flow_rate_lpm} lpm / {packet.flow_rate_gpm} gpm")
 
     new_state = Mqtt()
-    new_state.recirclating = packet.system_power_recirculation_on
+    new_state.recirculating = packet.system_power_recirculation_on
     new_state.stage = packet.system_stage_name
     new_state.water_capacity = packet.operating_capacity
-    new_state.water_flow_rate_gpm = packet.flow_rate_gpm if packet.flow_status_demand else 0.0
+    new_state.water_flow_rate_gpm = packet.flow_rate_gpm if packet.flow_status_demand and packet.system_active else 0.0
 
     await current_state.publish_changes(client, new_state)
 
