@@ -45,7 +45,7 @@ Some very smart folks have already reverse engineered the majority of the protoc
 |24|4|total gas usage|m3 in increments of 0.1|
 |28|2|elapsed time since install|days|
 |30|2|usage counter|increments of 10|
-|32|4|total water usage|L in increments of 0.1|
+|32|4|total water usage|L in increments of 0.1[^total_water_usage]|
 |36|4|operation time|hours|
 |40|1|unknown|always `0x00`|
 |41|1|unknown|always `0x00`|
@@ -65,7 +65,7 @@ Some very smart folks have already reverse engineered the majority of the protoc
 |7|1|unknown|always `0x00`|
 |8|1|flow detected|`0x08` = recirculating<br>`0x20` = demand|
 |9|1|system power|`0x05` = on<br>`0x25` = recirculation active|
-|10|1|system stage|`0x1-` = idle<br>&nbsp;&nbsp;`0x14` = stand-by<br>`0x2-` = start up<br>&nbsp;&nbsp;`0x20` = demand<br>&nbsp;&nbsp;`0x29` = pre-purge<br>&nbsp;&nbsp;`0x2B` = ignition<br>&nbsp;&nbsp;`0x2C` = flame on<br>&nbsp;&nbsp;`0x2D` = ramp-up<br>`0x3-` = active<br>&nbsp;&nbsp;`0x33` = active combustion<br>&nbsp;&nbsp;`0x34` = water adjustment valve operation<br>&nbsp;&nbsp;`0x3C` = flame off<br>`0x4-` = shut down<br>&nbsp;&nbsp;`0x46` = post-purge 1/2 (15s)<br>&nbsp;&nbsp;`0x47` = post-purge 2/2 (15s)<br>&nbsp;&nbsp;`0x49` = dhw-wait (150s)|
+|10|1|system stage|`0x1-` = idle<br>&nbsp;&nbsp;`0x14` = stand-by<br>`0x2-` = start up<br>&nbsp;&nbsp;`0x20` = demand<br>&nbsp;&nbsp;`0x29` = pre-purge<br>&nbsp;&nbsp;`0x2B` = ignition<br>&nbsp;&nbsp;`0x2C` = flame on<br>&nbsp;&nbsp;`0x2D` = ramp-up<br>`0x3-` = active<br>&nbsp;&nbsp;`0x33` = active combustion<br>&nbsp;&nbsp;`0x34` = water adjustment valve operation<br>&nbsp;&nbsp;`0x3C` = flame off<br>`0x4-` = shut down<br>&nbsp;&nbsp;`0x46` = post-purge 1/2 (15s)<br>&nbsp;&nbsp;`0x47` = post-purge 2/2 (15s)<br>&nbsp;&nbsp;`0x49` = dhw-wait (150s)<br>[^system_stage]|
 |11|1|set temperature|C value in increments of 0.5|
 |12|1|heat exchanger outlet temperature|C value in increments of 0.5|
 |13|1|heat exchanger inlet temperature|C value in increments of 0.5|
@@ -108,3 +108,7 @@ Some very smart folks have already reverse engineered the majority of the protoc
 
 ## Running
 1. `source venv/bin/python3 npe240a2.py`
+
+# FootNotes
+[^system_stage]: To attempt to get names for the stages I used AI on a maintenance manual. They're most likely wrong but seem "good" enough. The post-purge and DHW-Wait are correct because they can be confirmed by timing what's shown on the unit's display.
+[^total_water_usage]: This only updates when the `operation time` updates.
