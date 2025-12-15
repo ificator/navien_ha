@@ -55,7 +55,7 @@ Some very smart folks have already reverse engineered the majority of the protoc
 |45|1|unknown|always `0x00`|
 |46|1|recirculation enabled|`0x00` = no<br>`0x01` = yes|
 |47|1|unknown|always `0x00`|
-|48|1|CRC||
+|48|1|CRC|[^crc]|
 
 ## Water
 *NOTE: multi-byte numbers are in little-endian*
@@ -95,7 +95,7 @@ Some very smart folks have already reverse engineered the majority of the protoc
 |37|1|unknown|always `0x00`|
 |38|1|unknown|always `0x00`|
 |39|1|unknown|always `0x00`|
-|40|1|CRC||
+|40|1|CRC|[^crc]|
 
 # Python Script
 ## Setup the environment
@@ -110,5 +110,6 @@ Some very smart folks have already reverse engineered the majority of the protoc
 1. `source venv/bin/python3 npe240a2.py`
 
 # FootNotes
+[^crc]: The CRC was reverse engineered by [@htumanyan](https://github.com/htumanyan) - you can find an example implementation [here](https://github.com/htumanyan/navien/blob/main/src/checksum.cpp).
 [^system_stage]: To attempt to get names for the stages I used AI on a maintenance manual. They're most likely wrong but seem "good" enough. The post-purge and DHW-Wait are correct because they can be confirmed by timing what's shown on the unit's display.
 [^total_water_usage]: This only updates when the `operation time` updates.

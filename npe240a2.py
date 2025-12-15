@@ -24,6 +24,10 @@ class Helpers:
         
         Returns:
             byte: checksum value (0-255)
+
+        Note:
+            This algorithm is ported from the following CPP code:
+            https://github.com/htumanyan/navien/blob/main/src/checksum.cpp
         """
         length = len(buffer)
         
