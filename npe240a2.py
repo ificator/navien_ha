@@ -6,10 +6,7 @@ import asyncio
 import serial
 import time
 
-# Debug mode
-DEBUG_PACKETS = True
-DEBUG_MQTT = True
-DEBUG_UNKNOWN_FIELDS = True
+import config
 
 #region Helpers
 class Helpers:
@@ -116,7 +113,7 @@ class GasPacket:
     
     def __init__(self: Self, packet: Packet):
         self._packet = packet
-        if DEBUG_UNKNOWN_FIELDS:
+        if config.DEBUG_UNKNOWN_FIELDS:
             for i in range(len(self._unknown_fields)):
                 (index, previous_value) = self._unknown_fields[i]
                 current_value = self._packet.data[index]
@@ -267,7 +264,7 @@ class WaterPacket:
 
     def __init__(self: Self, packet: Packet):
         self._packet = packet
-        if DEBUG_UNKNOWN_FIELDS:
+        if config.DEBUG_UNKNOWN_FIELDS:
             for i in range(len(self._unknown_fields)):
                 (index, previous_value) = self._unknown_fields[i]
                 current_value = self._packet.data[index]
@@ -454,10 +451,6 @@ class WaterPacket:
 
 #region Mqtt
 class Mqtt:
-    BROKER = "<broker>"
-    USER = "<username>"
-    PASSWORD = "<password>"
-
     TOPIC_GAS_CURRENT_USAGE = "pi/waterheater/gas/current"
     TOPIC_GAS_TOTAL_USAGE = "pi/waterheater/gas/total"
     TOPIC_RECIRCULATING = "pi/waterheater/recirculating"
@@ -515,7 +508,7 @@ class Mqtt:
 
             if should_publish:
                 setattr(self, attr_name, new_value)
-                if DEBUG_MQTT:
+                if config.DEBUG_MQTT:
                     print(f"Would have published {new_value} to {topic} at {datetime.now()}")
                 else:
                     await client.publish(topic, str(new_value), retain=True)
@@ -538,8 +531,8 @@ async def main():
         
         while True:
             try:
-                print(f"Connecting to MQTT broker at {Mqtt.USER}@{Mqtt.BROKER}...")
-                async with Client(Mqtt.BROKER, username=Mqtt.USER, password=Mqtt.PASSWORD) as client:
+                print(f"Connecting to MQTT broker at {config.MQTT_USER}@{config.MQTT_BROKER}...")
+                async with Client(config.MQTT_BROKER, username=config.MQTT_USER, password=config.MQTT_PASSWORD) as client:
                     print("Connected!")
                     await main_loop(ser, client)
             except MqttError as e:
@@ -559,7 +552,7 @@ async def main_loop(ser, client):
     while True:
         packet = read_packet(ser)
         if packet:
-            if DEBUG_PACKETS:
+            if config.DEBUG_PACKETS:
                 # Dump raw packet for manual parsing
                 print(f"Raw packet ({len(packet.data)} bytes): {Helpers.format_hex(packet.data)}")
 
@@ -569,18 +562,18 @@ async def main_loop(ser, client):
                 gasPacket = GasPacket.decode(packet)
                 if gasPacket is not None:
                     await process_gas_packet(client, gasPacket)
-                elif DEBUG_PACKETS:
+                elif config.DEBUG_PACKETS:
                     print(f"  -> Invalid gas packet")
             elif packet_type == Header.WATER_ID:
                 waterPacket = WaterPacket.decode(packet)
                 if waterPacket is not None:
                     await process_water_packet(client, waterPacket)
-                elif DEBUG_PACKETS:
+                elif config.DEBUG_PACKETS:
                     print(f"  -> Invalid water packet")
-            elif DEBUG_PACKETS:
+            elif config.DEBUG_PACKETS:
                 print(f"  -> Unknown packet type: {packet_type:02x}")
             
-            if DEBUG_PACKETS:
+            if config.DEBUG_PACKETS:
                 # Blank line between packets
                 print("")
 
@@ -590,7 +583,7 @@ async def main_loop(ser, client):
 async def process_gas_packet(client, packet: GasPacket):
     """Parse gas-related packet (Packet B)"""
 
-    if DEBUG_PACKETS:
+    if config.DEBUG_PACKETS:
         print(f"  Time: {datetime.now()}")
         print(f"  Type: Gas")
         print(f"  Current Gas Usage: {packet.gas_current_usage_kcal} kcal / {packet.gas_current_usage_btu} btu")
@@ -612,7 +605,7 @@ async def process_gas_packet(client, packet: GasPacket):
 async def process_water_packet(client, packet: WaterPacket):
     """Parse water-related packet (Packet A)"""
 
-    if DEBUG_PACKETS:
+    if config.DEBUG_PACKETS:
         print(f"  Time: {datetime.now()}")
         print(f"  Type: Water")
         print(f"  System Power: {packet.system_power}")
@@ -668,7 +661,7 @@ def read_packet(ser) -> Packet:
 
                 if crc_actual == crc_expected:
                     return packet
-                elif DEBUG_PACKETS:
+                elif config.DEBUG_PACKETS:
                     print(f"CRC MISMATCH!! ({crc_expected} != {crc_actual})")
 
 if __name__ == "__main__":

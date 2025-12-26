@@ -1,0 +1,9 @@
+# DEBUG
+DEBUG_PACKETS = True
+DEBUG_MQTT = True
+DEBUG_UNKNOWN_FIELDS = True
+
+# MQTT
+MQTT_BROKER = "<broker>"
+MQTT_USER = "<username>"
+MQTT_PASSWORD = "<password>"
